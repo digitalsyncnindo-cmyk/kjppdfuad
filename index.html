@@ -1,0 +1,886 @@
+```react
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  LayoutDashboard, FolderOpen, Plus, Search, 
+  X, Save, MapPin, Building, Users, AlertCircle, 
+  CheckCircle2, Trash2, Download, FileSpreadsheet, 
+  Calculator, ListChecks, FileText, Files,
+  UserCircle, Settings, ArrowRight, FileDown,
+  BrainCircuit, ShieldCheck // Menambahkan ShieldCheck yang sebelumnya terlewat
+} from 'lucide-react';
+
+const globalStyles = `
+  @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+  * { font-family: 'Plus Jakarta Sans', sans-serif; -webkit-tap-highlight-color: transparent; }
+  .custom-scroll::-webkit-scrollbar { width: 4px; }
+  .custom-scroll::-webkit-scrollbar-track { background: #f1f5f9; }
+  .custom-scroll::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+  .hide-scrollbar::-webkit-scrollbar { display: none; }
+  .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+`;
+
+const DB_KEY = 'kjpp_frr_stable_v15';
+const SETTINGS_KEY = 'kjpp_frr_settings_v15';
+
+const LAMPIRAN_2_LIST = [
+  "Informasi tata ruang tidak jelas", "Legalitas tanah < 5 tahun", "Legalitas kadaluarsa",
+  "Diatas Hak Pakai (HP)", "Diatas HPL", "Dekat Rumah Sakit/Klinik", "Dekat Sekolah/Bimbel",
+  "Sarang burung walet", "Rencana pelebaran jalan", "Bawah jembatan/flyover",
+  "Zoning Fasum/Hutan Lindung", "Tanah kosong daerah sepi", "Indikasi sengketa",
+  "Tanah/Bangunan tidak terawat", "Rumah mewah lokasi kumuh", "Tidak ada akses jalan",
+  "Jalan depan umum", "Jalan < 2m (No Mobil)", "Akses tanah/batu", "Tanpa area parkir",
+  "Jarak <= 100m lampu merah", "Elevasi < jalan (>50cm)", "Dekat/Batas sungai (>3m)",
+  "Dekat pantai/jurang", "Dekat tempat ibadah", "Digunakan tempat ibadah",
+  "Rawan banjir", "Dekat SUTT/SUTET", "Dekat Gardu Induk", "Dilintasi SUTT/SUTET",
+  "Dekat/Ada Tower BTS", "Perlu diurug", "Jalan Buntu/Kuldesak", "Tusuk Sate",
+  "Dekat Makam", "Dekat Keluarga (Makam)", "Dekat SPBU", "Dekat TPS (>500m)",
+  "Dekat Rel KA", "Dekat MRT/LRT", "Dekat Pipa Gas", "Dekat Sawah", "Bangunan Non-Permanen",
+  "Daerah Longsor/Gempa", "Daerah Polusi", "Daerah Lokalisasi"
+];
+
+const LocalDB = {
+  fetch: () => { try { return JSON.parse(localStorage.getItem(DB_KEY)) || []; } catch(e) { return []; } },
+  save: (data) => { try { localStorage.setItem(DB_KEY, JSON.stringify(data)); return true; } catch(e) { return false; } }
+};
+
+const SettingsDB = {
+  fetch: () => { try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || { defaultSurveyor: '', defaultPenilai: '' }; } catch(e) { return { defaultSurveyor: '', defaultPenilai: '' }; } },
+  save: (data) => { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(data)); } catch(e) {} }
+};
+
+function FrrLogo({ className = "w-8 h-8", animate = false }) {
+  return (
+    <div className={`${className} bg-green-700 rounded-tl-2xl rounded-br-2xl rounded-tr-md rounded-bl-md relative overflow-hidden shadow-lg border border-green-600 ${animate ? 'animate-pulse' : ''}`}>
+       <div className="absolute bottom-0 left-0 w-full h-[120%] bg-lime-400 origin-bottom-left -rotate-[35deg] translate-y-[20%] translate-x-[20%]"></div>
+       <div className="absolute top-0 right-0 w-full h-[120%] bg-green-700 origin-top-right -rotate-[35deg] -translate-y-[10%] -translate-x-[20%]"></div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [isBooting, setIsBooting] = useState(true);
+  const [activeMenu, setActiveMenu] = useState('dashboard');
+  const [projects, setProjects] = useState([]);
+  const [settings, setSettings] = useState({ defaultSurveyor: '', defaultPenilai: '' });
+  
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [editingData, setEditingData] = useState(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  
+  const [notification, setNotification] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    setProjects(LocalDB.fetch());
+    setSettings(SettingsDB.fetch());
+    const timer = setTimeout(() => setIsBooting(false), 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const showToast = (message, type = 'success') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleSave = (data) => {
+    let updated;
+    if (editingData) {
+      updated = projects.map(p => p.id === data.id ? data : p);
+    } else {
+      updated = [data, ...projects];
+    }
+    
+    if(LocalDB.save(updated)) {
+      setProjects(updated);
+      setIsFormOpen(false);
+      setEditingData(null);
+      showToast('Data berhasil diverifikasi & disimpan');
+    } else {
+      showToast('Error: Kapasitas memori browser penuh', 'error');
+    }
+  };
+
+  const handleDelete = (id) => {
+    if(window.confirm('Hapus data survei ini permanen?')) {
+      const updated = projects.filter(p => p.id !== id);
+      LocalDB.save(updated);
+      setProjects(updated);
+      showToast('Data dihapus', 'info');
+    }
+  };
+
+  const handleDuplicate = (project) => {
+    const duplicated = { 
+      ...project, 
+      id: Date.now().toString(), 
+      admin: { ...(project.admin || {}), noTugas: (project.admin?.noTugas || '') + ' (Copy)' } 
+    };
+    const updated = [duplicated, ...projects];
+    LocalDB.save(updated);
+    setProjects(updated);
+    showToast('Data digandakan');
+  };
+
+  const handleExportCSV = () => {
+    if (projects.length === 0) return showToast('Belum ada data', 'error');
+    let csv = 'No Tugas,Tanggal,Klien,Alamat Fisik,Koordinat,Jarak Kota,Tol Terdekat,Luas Tanah,Bentuk Tanah,Jenis Dok,No Dok,Atas Nama,Luas Dok,No IMB,Penerbit IMB,Luas IMB,Luas Bgn Fisik,Tahun Bgn,Kondisi,Penyusutan Fisik (%),Struktur,HBU,Daya Jual,Total Nilai Tanah,Total Nilai Bgn,Total Nilai Pasar,Catatan Khusus\n';
+    const escapeCsv = (str) => `"${String(str || '').replace(/"/g, '""').replace(/\n/g, ' ')}"`;
+    
+    projects.forEach(p => {
+      const a = p.admin || {};
+      const l = p.lokasi || {};
+      const t = p.tanah || {};
+      const le = p.legal || {};
+      const b = p.bangunan || {};
+      const n = p.nilai || {};
+      const c = p.catatan || {};
+      const dok0 = (le.dokumen && le.dokumen[0]) ? le.dokumen[0] : {};
+
+      const row = [ 
+        a.noTugas, a.tglInspeksi, a.klien, l.alamatFisik, l.koordinat, l.jarakPusatKota, l.aksesTol, 
+        t.luas, t.bentukTanah, dok0.jenisDok, dok0.noDok, le.atasNamaUtama, dok0.luasDok, 
+        le.imbNo, le.penerbitIMB, le.luasIMB, b.luasBgn, b.tahun, b.kondisi, n.bgn_penyusutan, 
+        b.struktur, c.hbu, c.dayaJual, n.tanah_total, n.bgn_total, n.pasar_total, c.khusus 
+      ];
+      csv += row.map(escapeCsv).join(',') + '\n';
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.href = url; link.download = `Data_Inspeksi_FRR_${Date.now()}.csv`;
+    link.click();
+  };
+
+  const generateWord = (p) => {
+    const le = p.legal || {};
+    const doks = le.dokumen || [];
+    const sertsHtml = doks.map((s, i) => `<li style="margin-bottom: 4px;">${i+1}. ${s.jenisDok || '-'} No. ${s.noDok || '-'}, luas ${s.luasDok || '-'} m&sup2;</li>`).join('');
+    
+    const fmtRp = (val) => Number(val || 0).toLocaleString('id-ID');
+
+    const content = `
+      <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: 'Times New Roman', Times, serif; font-size: 11pt; line-height: 1.5; color: black; }
+          h2 { font-size: 12pt; font-weight: bold; margin-bottom: 6pt; }
+          h3 { font-size: 11pt; font-weight: bold; margin-top: 12pt; margin-bottom: 4pt; }
+          p { margin-top: 0; margin-bottom: 6pt; text-align: justify; }
+          table { width: 100%; border-collapse: collapse; margin-top: 6pt; margin-bottom: 12pt; }
+          th, td { border: 1px solid black; padding: 6px; text-align: left; vertical-align: top; }
+          .bold { font-weight: bold; }
+        </style>
+      </head>
+      <body>
+        <h2>2. LAPORAN PENILAIAN</h2>
+        <h3>2.1 Lokasi</h3>
+        <p>Aset yang dinilai berupa ${(p.tanah || {}).jenisAset || '-'} yang terdiri dari tanah dan bangunan dengan koordinat aset pada ${(p.lokasi || {}).koordinat || '-'}, yang terletak di ${(p.lokasi || {}).alamatFisik || '-'}.</p>
+
+        <h3>2.2 Ringkasan Penilaian</h3>
+        <table>
+          <tr><td style="width: 50%;">Tanah (${(p.tanah || {}).luas || '0'} m&sup2;)</td><td style="width: 50%;">Rp ${fmtRp((p.nilai || {}).tanah_total)}</td></tr>
+          <tr><td>Bangunan (${(p.bangunan || {}).luasBgn || '0'} m&sup2;)</td><td>Rp ${fmtRp((p.nilai || {}).bgn_total)}</td></tr>
+          <tr><td>Sarana Pelengkap</td><td>Rp ${fmtRp((p.nilai || {}).sarana_total)}</td></tr>
+          <tr><td class="bold">NILAI PASAR ASET</td><td class="bold">Rp ${fmtRp((p.nilai || {}).pasar_total)}</td></tr>
+          <tr><td>Indikasi Nilai Likuidasi</td><td>Rp ${fmtRp((p.nilai || {}).likuidasi_total)}</td></tr>
+        </table>
+
+        <h3>2.3 Gambaran Umum Lokasi</h3>
+        <p>Jarak ke Pusat Kota: ${(p.lokasi || {}).jarakPusatKota || '-'}<br>Akses Tol Terdekat: ${(p.lokasi || {}).aksesTol || '-'}</p>
+
+        <h3>2.4 Fasilitas dan Keadaan Lingkungan</h3>
+        <p>Jalan depan aset memiliki lebar ROW kurang lebih ${(p.lokasi || {}).rowJalan || '-'} meter, terbuat dari ${(p.lokasi || {}).materialJalan || '-'}.<br>
+        Utilitas: ${(p.lokasi || {}).utilitas || '-'}<br>Transportasi: ${(p.lokasi || {}).transportasi || '-'}</p>
+
+        <h3>2.5 Uraian Tapak dan Perkembangan Tanah</h3>
+        <p>Persil tanah yang dimaksud merupakan tanah matang berbentuk ${(p.tanah || {}).bentukTanah || '-'} dan berada diposisi ${(p.tanah || {}).statusTanah || '-'} dengan luas tanah kurang lebih ${(p.tanah || {}).luas || '-'} meter persegi.<br>
+        Topografi tanah pada umumnya ${(p.tanah || {}).topografi || '-'}, dengan elevasi ${(p.tanah || {}).elevasi || '-'}.</p>
+        <p>Batas-batas:<br>Utara: ${(p.tanah || {}).batasUtara || '-'}<br>Timur: ${(p.tanah || {}).batasTimur || '-'}<br>Selatan: ${(p.tanah || {}).batasSelatan || '-'}<br>Barat: ${(p.tanah || {}).batasBarat || '-'}</p>
+
+        <h3>2.6 Ketentuan dan Perencanaan Tata Kota</h3>
+        <p>Zoning Tanah: ${le.zoning || '-'}<br>GSB: ${le.gsb || '-'} m</p>
+
+        <h3>2.7 Dokumen Kepemilikan</h3>
+        <ul style="margin-top: 0; padding-left: 20px;">${sertsHtml || '-'}</ul>
+        <p>Tercatat atas nama: ${le.atasNamaUtama || '-'}</p>
+
+        <h3>2.8 Ijin Mendirikan Bangunan</h3>
+        <p>IMB No. ${le.imbNo || '-'} Tahun ${le.imbTahun || '-'}<br>Luas IMB: ${le.luasIMB || '-'} m&sup2; (Diterbitkan oleh ${le.penerbitIMB || '-'})</p>
+
+        <h3>2.9 Penggunaan Tertinggi dan Terbaik</h3><p>Kesimpulan HBU: ${(p.catatan || {}).hbu || '-'}</p>
+        <h3>2.10 Kondisi Pasar Properti</h3><p>Daya Jual / Likuiditas Properti Sekitar: ${(p.catatan || {}).dayaJual || '-'}</p>
+        <h3>2.11 Faktor-faktor yang Mempengaruhi Nilai</h3><p>Catatan Surveyor:<br>${(p.catatan || {}).khusus || '-'}</p>
+
+        <h3>2.12 Spesifikasi Bangunan</h3>
+        <table style="border:none;">
+          <tr><td style="width: 30%; border:none; padding:2px;">Luas Fisik</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).luasBgn || '-'} m&sup2;</td></tr>
+          <tr><td style="border:none; padding:2px;">Tahun Bangun</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).tahun || '-'}</td></tr>
+          <tr><td style="border:none; padding:2px;">Status Hunian</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).statusHunian || '-'}</td></tr>
+          <tr><td style="border:none; padding:2px;">Kondisi</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).kondisi || '-'}</td></tr>
+          <tr><td style="border:none; padding:2px;">Penyusutan Fisik</td><td style="border:none; padding:2px;">: ${(p.nilai || {}).bgn_penyusutan || '0'}%</td></tr>
+          <tr><td style="border:none; padding:2px;">Struktur Utama</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).struktur || '-'}</td></tr>
+          <tr><td style="border:none; padding:2px;">Atap (Penutup)</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).atap || '-'}</td></tr>
+          <tr><td style="border:none; padding:2px;">Dinding</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).dinding || '-'}</td></tr>
+          <tr><td style="border:none; padding:2px;">Listrik / Air</td><td style="border:none; padding:2px;">: ${(p.bangunan || {}).listrik || '-'} VA / ${(p.bangunan || {}).air || '-'}</td></tr>
+        </table>
+      </body></html>`;
+
+    const blob = new Blob(['\ufeff', content], { type: 'application/msword' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a"); link.href = url; 
+    
+    const clientName = String((p.admin || {}).klien || 'Laporan').replace(/[^a-zA-Z0-9]/g, '_');
+    link.download = `Bab_2_${clientName}.doc`;
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    showToast('Dokumen Word berhasil dibuat!');
+  };
+
+  const filteredProjects = useMemo(() => {
+    if (!searchQuery) return projects;
+    return projects.filter(p => {
+      const q = searchQuery.toLowerCase();
+      const klien = String((p.admin || {}).klien || '').toLowerCase();
+      const alamat = String((p.lokasi || {}).alamatFisik || '').toLowerCase();
+      const noTugas = String((p.admin || {}).noTugas || '').toLowerCase();
+      return klien.includes(q) || alamat.includes(q) || noTugas.includes(q);
+    });
+  }, [projects, searchQuery]);
+
+  if (isBooting) return <><style>{globalStyles}</style><SplashScreen /></>;
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-slate-50 text-slate-800">
+      <style>{globalStyles}</style>
+
+      {notification && (
+        <div className={`fixed top-6 right-6 z-[100] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 text-white font-bold animate-in slide-in-from-top-10
+          ${notification.type === 'error' ? 'bg-red-600' : notification.type === 'info' ? 'bg-blue-600' : 'bg-green-900 border-l-4 border-lime-400'}`}>
+          {notification.type === 'error' ? <AlertCircle size={20} /> : <CheckCircle2 size={20} className={notification.type==='info'?'text-white':'text-lime-400'} />}
+          {notification.message}
+        </div>
+      )}
+
+      {/* DESKTOP SIDEBAR */}
+      <aside className="hidden lg:flex w-80 bg-green-950 text-white flex-col z-20 shadow-2xl">
+        <div className="p-10 border-b border-white/10">
+          <div className="flex items-center gap-4">
+             <FrrLogo className="w-12 h-12 shadow-2xl shadow-lime-500/20" />
+             <div>
+               <h1 className="text-xl font-black tracking-tighter text-white">KJPP FRR</h1>
+               <div className="flex items-center gap-2 mt-1">
+                 <div className="w-2 h-2 rounded-full bg-lime-400 animate-pulse"></div>
+                 <span className="text-[10px] font-bold uppercase tracking-widest text-lime-400">Data Center V15</span>
+               </div>
+             </div>
+          </div>
+        </div>
+        <nav className="flex-1 py-8 px-6 space-y-3">
+          <SidebarBtn icon={<LayoutDashboard size={20}/>} label="Dashboard" active={activeMenu === 'dashboard'} onClick={() => setActiveMenu('dashboard')} />
+          <SidebarBtn icon={<FolderOpen size={20}/>} label="Database Survei" active={activeMenu === 'inspeksi'} onClick={() => setActiveMenu('inspeksi')} />
+        </nav>
+        <div className="p-6 m-6 bg-white/5 rounded-3xl hover:bg-white/10 transition-all cursor-pointer border border-white/5" onClick={() => setIsProfileOpen(true)}>
+           <div className="flex items-center gap-4">
+             <div className="w-12 h-12 rounded-xl bg-lime-400 flex items-center justify-center text-green-950"><UserCircle size={24} /></div>
+             <div className="overflow-hidden">
+               <p className="text-sm font-black truncate w-full text-white">{settings.defaultSurveyor || 'Surveyor'}</p>
+               <p className="text-[10px] font-bold text-white/50 uppercase tracking-widest mt-1">Pengaturan Profil</p>
+             </div>
+           </div>
+        </div>
+      </aside>
+
+      {/* MAIN LAYOUT */}
+      <div className="flex-1 flex flex-col h-full relative z-10 overflow-hidden">
+        
+        <header className="bg-white/80 backdrop-blur-lg px-6 py-4 lg:py-6 lg:px-10 flex justify-between items-center sticky top-0 z-30 border-b border-slate-200 shadow-sm">
+          <div className="flex items-center gap-4">
+            <div className="lg:hidden"><FrrLogo className="w-10 h-10" /></div>
+            <div>
+              <h2 className="text-lg lg:text-2xl font-black text-slate-900 tracking-tight">
+                {activeMenu === 'dashboard' ? 'Overview' : 'Pencarian Database'}
+              </h2>
+              <p className="hidden md:block text-sm text-slate-500 font-medium">Sistem penyimpanan lokal mandiri.</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+            <div className="hidden md:flex items-center bg-slate-100 rounded-2xl px-4 py-2.5 w-72 lg:w-96 focus-within:bg-white focus-within:ring-2 focus-within:ring-green-600/30 transition-all border border-slate-200">
+              <Search size={18} className="text-slate-400" />
+              <input type="text" placeholder="Cari klien atau nomor tugas..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-transparent border-none focus:ring-0 text-sm font-bold w-full placeholder:text-slate-400 ml-2 outline-none" />
+            </div>
+            <button onClick={() => setIsProfileOpen(true)} className="lg:hidden w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600"><Settings size={20}/></button>
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-y-auto p-4 md:p-10 pb-32 bg-slate-50 scroll-smooth custom-scroll">
+          {activeMenu === 'dashboard' && (
+            <div className="max-w-6xl mx-auto space-y-8">
+              
+              <div className="bg-green-900 rounded-[3rem] p-8 md:p-12 text-white shadow-2xl relative overflow-hidden group">
+                <div className="relative z-10">
+                  <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-lime-400/20 rounded-full text-[10px] font-black uppercase tracking-widest text-lime-400 border border-lime-400/30 mb-6">
+                    <BrainCircuit size={14}/> Integrated Engine
+                  </div>
+                  <h3 className="text-3xl md:text-4xl font-black mb-3 tracking-tighter leading-tight">Entri Cepat.<br/>Validasi Otomatis.</h3>
+                  <p className="text-white/70 text-sm md:text-base max-w-md mb-8 font-medium leading-relaxed">
+                    Sistem mendeteksi jenis aset untuk menyembunyikan form yang tidak perlu, dan mengkalkulasi nilai akhir secara instan.
+                  </p>
+                  <button onClick={() => { setEditingData(null); setIsFormOpen(true); }} className="bg-lime-400 text-green-950 px-8 py-4 rounded-2xl font-black text-sm flex items-center gap-3 hover:bg-white hover:scale-105 active:scale-95 transition-all shadow-xl shadow-lime-500/20">
+                    <Plus size={20} strokeWidth={3} /> MULAI SURVEI
+                  </button>
+                </div>
+                <div className="absolute top-0 right-0 w-[60%] h-full bg-gradient-to-l from-green-800 to-transparent"></div>
+                <div className="absolute -right-20 -bottom-20 w-80 h-80 bg-lime-400 rounded-full mix-blend-screen blur-3xl opacity-20 pointer-events-none"></div>
+                <Building size={200} className="absolute -right-10 bottom-0 text-white/5 rotate-6 pointer-events-none" />
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+                <StatBox label="Database" value={projects.length} icon={<FileSpreadsheet size={20}/>} color="blue" />
+                <StatBox label="Aman" value="100%" icon={<ShieldCheck size={20}/>} color="green" />
+                <div onClick={handleExportCSV} className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm cursor-pointer hover:shadow-lg hover:border-green-400 transition-all col-span-2 flex justify-between items-center group">
+                    <div className="flex items-center gap-4">
+                      <div className="p-4 bg-green-50 text-green-700 rounded-2xl group-hover:bg-green-700 group-hover:text-white transition-colors"><Download size={24} /></div>
+                      <div>
+                        <p className="text-sm font-black text-slate-800 uppercase">Ekspor Data (CSV)</p>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-1">Tarik ke Excel Master</p>
+                      </div>
+                    </div>
+                    <ArrowRight size={24} className="text-slate-300 group-hover:text-green-600 transition-all mr-2" />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between items-center px-2 mb-4">
+                  <h4 className="text-lg font-black text-slate-900 flex items-center gap-2">Aktivitas Terakhir</h4>
+                  <button onClick={() => setActiveMenu('inspeksi')} className="text-xs font-black text-green-700 uppercase tracking-widest hover:text-green-800">Lihat Semua</button>
+                </div>
+                {projects.length === 0 ? (
+                  <div className="bg-slate-100 border-2 border-dashed border-slate-200 p-12 rounded-[3rem] text-center">
+                    <FolderOpen size={40} className="mx-auto text-slate-300 mb-4" />
+                    <p className="text-slate-400 font-bold">Memori kosong. Belum ada entri.</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {projects.slice(0, 4).map(p => (
+                      <ProjectCard key={p.id} project={p} onEdit={() => { setEditingData(p); setIsFormOpen(true); }} onDelete={() => handleDelete(p.id)} onDoc={() => generateWord(p)} onDup={() => handleDuplicate(p)} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {activeMenu === 'inspeksi' && (
+             <div className="max-w-6xl mx-auto space-y-6">
+                <div className="bg-white p-2 rounded-2xl border border-slate-200 shadow-sm flex items-center md:hidden mb-4">
+                   <Search size={20} className="text-slate-400 ml-4" />
+                   <input type="text" placeholder="Pencarian..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="bg-transparent border-none focus:ring-0 text-sm font-bold w-full placeholder:text-slate-400 ml-2 outline-none" />
+                </div>
+                {filteredProjects.length === 0 ? (
+                   <div className="py-24 text-center text-slate-400 font-bold uppercase tracking-widest text-xs">Pencarian tidak ditemukan</div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {filteredProjects.map(p => (
+                      <ProjectCard key={p.id} project={p} onEdit={() => { setEditingData(p); setIsFormOpen(true); }} onDelete={() => handleDelete(p.id)} onDoc={() => generateWord(p)} onDup={() => handleDuplicate(p)} />
+                    ))}
+                  </div>
+                )}
+             </div>
+          )}
+        </main>
+
+        <nav className="lg:hidden bg-white/90 backdrop-blur-xl border-t border-slate-200 flex justify-around items-center px-6 py-3 pb-safe absolute bottom-0 w-full z-40">
+          <MobileNavBtn icon={<LayoutDashboard size={24} />} label="Home" active={activeMenu === 'dashboard'} onClick={() => setActiveMenu('dashboard')} />
+          <div className="relative -top-8">
+            <button onClick={() => { setEditingData(null); setIsFormOpen(true); }} className="relative bg-green-800 text-white p-4 rounded-3xl shadow-xl active:scale-95 transition-transform border-4 border-white/80">
+              <Plus size={28} strokeWidth={3} />
+            </button>
+          </div>
+          <MobileNavBtn icon={<FolderOpen size={24} />} label="Data" active={activeMenu === 'inspeksi'} onClick={() => setActiveMenu('inspeksi')} />
+        </nav>
+      </div>
+
+      {isFormOpen && <DataForm onClose={() => setIsFormOpen(false)} onSave={handleSave} initialData={editingData} defaultSettings={settings} showToast={showToast} />}
+      {isProfileOpen && <ProfileModal onClose={() => setIsProfileOpen(false)} current={settings} onSave={(data) => { setSettings(data); SettingsDB.save(data); setIsProfileOpen(false); showToast('Profil Disimpan'); }} />}
+    </div>
+  );
+}
+
+// ============================================================================
+// COMPONENTS
+// ============================================================================
+function StatBox({ label, value, icon, color }) {
+  const colors = { blue: 'bg-blue-50 text-blue-600', green: 'bg-green-50 text-green-700' };
+  return (
+    <div className="bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm flex flex-col justify-center">
+      <div className={`p-3 rounded-2xl w-fit mb-3 ${colors[color]}`}>{icon}</div>
+      <div className="text-3xl font-black text-slate-900 tracking-tighter">{value}</div>
+      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{label}</p>
+    </div>
+  );
+}
+
+function ProjectCard({ project, onEdit, onDelete, onDoc, onDup }) {
+  const s = (() => { 
+    let c=0; 
+    const a = project.admin || {};
+    const l = project.lokasi || {};
+    const t = project.tanah || {};
+    const n = project.nilai || {};
+    if(a.klien) c+=20; 
+    if(l.alamatFisik) c+=20; 
+    if(t.luas) c+=20; 
+    if(n.pasar_total) c+=40; 
+    return c;
+  })();
+
+  const klienName = (project.admin || {}).klien || 'Klien';
+  const noTugas = (project.admin || {}).noTugas || '-';
+  const alamat = (project.lokasi || {}).alamatFisik || '-';
+  const nilaiPasar = (project.nilai || {}).pasar_total || '0';
+
+  return (
+    <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative group hover:shadow-xl hover:border-green-200 transition-all duration-300">
+      <div className="flex justify-between items-start mb-5">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-500 font-black text-lg border border-slate-100">
+            {klienName.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <h5 className="font-black text-slate-900 tracking-tight text-lg leading-tight truncate w-32 md:w-48">{klienName}</h5>
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5 block">{noTugas}</span>
+          </div>
+        </div>
+        <div className="flex gap-1 opacity-100 lg:opacity-0 group-hover:opacity-100 transition-opacity">
+           <button onClick={onDoc} title="Unduh Word" className="p-2.5 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-600 hover:text-white transition-all"><FileDown size={16}/></button>
+           <button onClick={onDup} title="Duplikat" className="p-2.5 bg-slate-50 text-slate-600 rounded-xl hover:bg-slate-200 transition-all hidden md:block"><Files size={16}/></button>
+           <button onClick={onEdit} title="Edit" className="p-2.5 bg-amber-50 text-amber-600 rounded-xl hover:bg-amber-600 hover:text-white transition-all"><Settings size={16}/></button>
+           <button onClick={onDelete} title="Hapus" className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-600 hover:text-white transition-all"><Trash2 size={16}/></button>
+        </div>
+      </div>
+      <div className="bg-slate-50 p-4 rounded-2xl mb-5 border border-slate-100">
+        <p className="text-xs text-slate-600 font-bold leading-relaxed flex items-start gap-2">
+          <MapPin size={14} className="text-slate-300 shrink-0 mt-0.5" /> <span className="line-clamp-2">{alamat}</span>
+        </p>
+      </div>
+      <div className="flex justify-between items-end border-t border-slate-100 pt-5">
+        <div>
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Kelengkapan</p>
+          <div className="flex items-center gap-2">
+            <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${s===100?'bg-green-500':'bg-amber-400'}`} style={{width: `${s}%`}}></div></div>
+            <span className="text-[10px] font-black text-slate-600">{s}%</span>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Nilai Pasar</p>
+          <span className="text-base font-black text-green-800 tracking-tighter">Rp {Number(nilaiPasar).toLocaleString('id-ID')}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MASSIVE DYNAMIC FORM
+// ============================================================================
+function DataForm({ onClose, onSave, initialData, defaultSettings, showToast }) {
+  
+  const getInitialForm = () => {
+    const def = {
+      id: Date.now().toString(),
+      admin: { noTugas: `TGS-${Math.floor(Math.random()*1000)}/2026`, tglInspeksi: new Date().toISOString().split('T')[0], klien: '', penilai: defaultSettings.defaultPenilai, surveyor: defaultSettings.defaultSurveyor, tujuan: 'Jual Beli' },
+      lokasi: { alamatFisik: '', koordinat: '', pendamping: '', rowJalan: '', materialJalan: 'Aspal', jarakPusatKota: '', aksesTol: '', utilitas: 'PLN, Air Tanah', transportasi: 'Angkutan Kota' },
+      tanah: { jenisAset: 'Rumah Tinggal', luas: '', statusTanah: 'Interior Lot', bentukTanah: 'Beraturan', topografi: 'Datar', elevasi: 'Sejajar Jalan', batasUtara: '', batasSelatan: '', batasTimur: '', batasBarat: '' },
+      legal: { atasNamaUtama: '', zoning: 'Permukiman', gsb: '10', imbNo: '', imbTahun: '', penerbitIMB: 'Pemkab', luasIMB: '', dokumen: [{ id: Date.now(), jenisDok: 'SHM', noDok: '', luasDok: '' }] },
+      bangunan: { luasBgn: '', tahun: '', kondisi: 'Baik', statusHunian: 'Digunakan sendiri', pondasi: 'Tapak beton', struktur: 'Beton bertulang', lantai: 'Keramik', dinding: 'Bata diplester', atap: 'Genteng', listrik: '5500', air: 'Sumur Dalam' },
+      nilai: { tanah_m2: '', tanah_total: '', bgn_m2: '', bgn_bpb: '', bgn_penyusutan: '', bgn_total: '', sarana_total: '', pasar_total: '', likuidasi_total: '' },
+      catatan: { hbu: 'Rumah Tinggal', dayaJual: 'Sedang', khusus: '' },
+      lampiran2: [],
+      pembanding: [ { id: 1, alamat: '', jarak: '', luasTnh: '', luasBgn: '', harga: '', info: '' }, { id: 2, alamat: '', jarak: '', luasTnh: '', luasBgn: '', harga: '', info: '' }, { id: 3, alamat: '', jarak: '', luasTnh: '', luasBgn: '', harga: '', info: '' } ]
+    };
+
+    if(!initialData) return def;
+
+    const merged = { ...def };
+    Object.keys(def).forEach(key => {
+      if(typeof def[key] === 'object' && !Array.isArray(def[key])) {
+        merged[key] = { ...def[key], ...(initialData[key] || {}) };
+      } else {
+        merged[key] = initialData[key] || def[key];
+      }
+    });
+
+    if(!merged.legal.dokumen || merged.legal.dokumen.length === 0) {
+      merged.legal.dokumen = [{ id: Date.now(), jenisDok: 'SHM', noDok: '', luasDok: '' }];
+    }
+    return merged;
+  };
+
+  const [form, setForm] = useState(getInitialForm());
+  const [activeTabId, setActiveTabId] = useState('umum');
+
+  const isTanahKosong = (form.tanah?.jenisAset || '') === 'Tanah Kosong';
+
+  const allTabs = [
+    { id: 'umum', title: 'Admin', icon: <Users size={16}/> },
+    { id: 'lokasi', title: 'Tanah', icon: <MapPin size={16}/> },
+    { id: 'legal', title: 'Legal', icon: <FileText size={16}/> },
+    { id: 'bangunan', title: 'Bangunan', icon: <Building size={16}/>, hideIfTanahKosong: true },
+    { id: 'risiko', title: 'Risiko', icon: <ListChecks size={16}/> },
+    { id: 'pasar', title: 'Pasar', icon: <Search size={16}/> },
+    { id: 'nilai', title: 'Nilai', icon: <Calculator size={16}/> },
+    { id: 'simpan', title: 'Simpan', icon: <Save size={16}/> }
+  ];
+
+  const visibleTabs = allTabs.filter(t => !(isTanahKosong && t.hideIfTanahKosong));
+  
+  useEffect(() => {
+    if (isTanahKosong && activeTabId === 'bangunan') {
+      setActiveTabId('legal');
+    }
+  }, [isTanahKosong, activeTabId]);
+
+  const update = (sec, field, val) => {
+    let finalVal = val;
+    if(field === 'klien' || field === 'atasNamaUtama') finalVal = String(val || '').toUpperCase(); 
+    setForm(prev => ({ ...prev, [sec]: { ...(prev[sec] || {}), [field]: finalVal } }));
+  };
+
+  const updateArrayData = (index, field, value) => { const newData = [...(form.pembanding || [])]; newData[index] = {...newData[index], [field]: value}; setForm(prev => ({ ...prev, pembanding: newData })); };
+  const addDokumen = () => setForm(prev => ({ ...prev, legal: { ...(prev.legal || {}), dokumen: [...(prev.legal?.dokumen || []), { id: Date.now(), jenisDok: 'SHM', noDok: '', luasDok: '' }] } }));
+  const updateDokumen = (index, field, value) => { const newDocs = [...(form.legal?.dokumen || [])]; newDocs[index] = {...newDocs[index], [field]: value}; setForm(prev => ({ ...prev, legal: { ...(prev.legal || {}), dokumen: newDocs } })); };
+  const removeDokumen = (index) => setForm(prev => ({ ...prev, legal: { ...(prev.legal || {}), dokumen: (form.legal?.dokumen || []).filter((_, i) => i !== index) } }));
+  
+  const toggleLampiran2 = (item) => { 
+    setForm(prev => { 
+      const currentList = prev.lampiran2 || [];
+      return { ...prev, lampiran2: currentList.includes(item) ? currentList.filter(i => i !== item) : [...currentList, item] }; 
+    }); 
+  };
+
+  const handleSmartCalc = () => {
+    const t_m2_str = String((form.nilai || {}).tanah_m2 || "0").replace(/[^0-9.-]+/g,"");
+    const t_m2 = parseFloat(t_m2_str) || 0;
+    
+    const l_tnh = parseFloat((form.tanah || {}).luas) || 0;
+    const tot_tnh = t_m2 * l_tnh;
+    
+    const bgn_str = String((form.nilai || {}).bgn_total || "0").replace(/[^0-9.-]+/g,"");
+    const tot_bgn = parseFloat(bgn_str) || 0;
+    
+    const srn_str = String((form.nilai || {}).sarana_total || "0").replace(/[^0-9.-]+/g,"");
+    const tot_srn = parseFloat(srn_str) || 0;
+    
+    const grand_total = tot_tnh + (isTanahKosong ? 0 : tot_bgn) + tot_srn;
+    
+    setForm(prev => ({ 
+      ...prev, 
+      nilai: { 
+        ...(prev.nilai || {}), 
+        tanah_total: tot_tnh.toString(), 
+        pasar_total: grand_total.toString() 
+      } 
+    }));
+    showToast('Kalkulasi Selesai', 'success');
+  };
+
+  const attemptSave = () => {
+    if (!(form.admin || {}).klien) return showToast("Nama Klien wajib diisi!", "error");
+    onSave(form);
+  };
+
+  let currentIndex = visibleTabs.findIndex(t => t.id === activeTabId);
+  if (currentIndex === -1) { currentIndex = 0; setActiveTabId(visibleTabs[0].id); }
+  
+  const handlePrev = () => { if(currentIndex > 0) setActiveTabId(visibleTabs[currentIndex - 1].id); };
+  const handleNext = () => { if(currentIndex < visibleTabs.length - 1) setActiveTabId(visibleTabs[currentIndex + 1].id); };
+
+  const a = form.admin || {};
+  const l = form.lokasi || {};
+  const t = form.tanah || {};
+  const le = form.legal || {};
+  const b = form.bangunan || {};
+  const c = form.catatan || {};
+  const n = form.nilai || {};
+
+  return (
+    <div className="fixed inset-0 bg-green-950/80 backdrop-blur-xl z-[60] flex justify-center items-center lg:p-10">
+      <div className="bg-white w-full h-full lg:rounded-[3rem] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-300">
+        
+        <header className="px-6 py-5 lg:px-10 lg:py-8 border-b border-slate-100 flex justify-between items-center bg-white">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-lime-100 rounded-2xl flex items-center justify-center text-green-700">
+               <BrainCircuit size={24} />
+            </div>
+            <div>
+              <h2 className="text-xl font-black text-slate-900 tracking-tight">Form Inspeksi</h2>
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">{a.noTugas || '-'}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="w-10 h-10 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 hover:bg-red-50 hover:text-red-500 transition-colors"><X size={20} /></button>
+        </header>
+
+        <div className="px-6 py-3 lg:px-10 lg:py-5 bg-slate-50 border-b border-slate-200 flex gap-2 overflow-x-auto hide-scrollbar">
+          {visibleTabs.map((tab) => (
+            <button key={tab.id} onClick={() => setActiveTabId(tab.id)} 
+              className={`flex items-center gap-2 whitespace-nowrap px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all
+              ${activeTabId === tab.id ? 'bg-green-800 text-white shadow-md' : 'border border-slate-200 text-slate-500 hover:bg-slate-200'}`}>
+              {tab.icon} {tab.title}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 lg:p-10 bg-slate-50 scroll-smooth custom-scroll">
+          <div className="max-w-4xl mx-auto space-y-8 pb-10">
+
+            {activeTabId === 'umum' && (
+              <SectionForm title="Informasi Penugasan">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <InputBox label="Nama Klien" value={a.klien} onChange={v => update('admin', 'klien', v)} placeholder="PT BANK..." req={true} />
+                    <InputBox label="No. Penugasan" value={a.noTugas} onChange={v => update('admin', 'noTugas', v)} />
+                    <InputBox label="Surveyor" value={a.surveyor} onChange={v => update('admin', 'surveyor', v)} />
+                    <SelectBox label="Tujuan" value={a.tujuan} options={['Jual Beli', 'Agunan Kredit', 'Lelang']} onChange={v => update('admin', 'tujuan', v)} />
+                 </div>
+              </SectionForm>
+            )}
+
+            {activeTabId === 'lokasi' && (
+              <SectionForm title="Identifikasi Lokasi & Tanah">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                    <SelectBox label="Jenis Objek" value={t.jenisAset} options={['Rumah Tinggal', 'Ruko', 'Tanah Kosong', 'Gudang']} onChange={v => update('tanah', 'jenisAset', v)} />
+                    <InputBox label="Luas Tanah (m2)" type="number" value={t.luas} onChange={v => update('tanah', 'luas', v)} />
+                 </div>
+                 <InputBox label="Alamat Fisik Objek" isTextArea={true} value={l.alamatFisik} onChange={v => update('lokasi', 'alamatFisik', v)} req={true} />
+                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-6">
+                    <SelectBox label="Bentuk" value={t.bentukTanah} options={['Beraturan', 'Tidak Beraturan', 'Trapesium']} onChange={v => update('tanah', 'bentukTanah', v)} />
+                    <SelectBox label="Posisi" value={t.statusTanah} options={['Interior Lot', 'Corner Lot', 'Tusuk Sate']} onChange={v => update('tanah', 'statusTanah', v)} />
+                    <SelectBox label="Topografi" value={t.topografi} options={['Datar', 'Miring', 'Bergelombang']} onChange={v => update('tanah', 'topografi', v)} />
+                    <InputBox label="Elevasi" value={t.elevasi} onChange={v => update('tanah', 'elevasi', v)} placeholder="Sejajar jalan" />
+                 </div>
+              </SectionForm>
+            )}
+
+            {activeTabId === 'legal' && (
+              <SectionForm title="Legalitas & Perizinan">
+                 {(le.dokumen || []).map((d, i) => (
+                   <div key={d.id || i} className="p-6 bg-white border border-slate-200 rounded-3xl mb-4 relative shadow-sm">
+                      <p className="text-[10px] font-black text-slate-400 mb-4 tracking-widest">SERTIFIKAT {i+1}</p>
+                      {i > 0 && <button onClick={() => removeDokumen(i)} className="absolute top-4 right-4 text-red-500 text-xs font-bold bg-red-50 p-2 rounded-lg">Hapus</button>}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                         <SelectBox label="Hak" value={d.jenisDok} options={['SHM', 'SHGB', 'AJB']} onChange={v => updateDokumen(i, 'jenisDok', v)} />
+                         <InputBox label="Nomor" value={d.noDok} onChange={v => updateDokumen(i, 'noDok', v)} />
+                         <InputBox label="Luas (m2)" type="number" value={d.luasDok} onChange={v => updateDokumen(i, 'luasDok', v)} />
+                      </div>
+                   </div>
+                 ))}
+                 <button onClick={addDokumen} className="w-full py-4 border-2 border-dashed border-slate-300 rounded-2xl text-slate-500 font-bold hover:bg-slate-100 transition-colors mb-6">+ Tambah Pemecahan</button>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-100/50 p-6 rounded-3xl border border-slate-200">
+                    <InputBox label="Nama Pemilik" value={le.atasNamaUtama} onChange={v => update('legal', 'atasNamaUtama', v)} />
+                    <InputBox label="Zoning" value={le.zoning} onChange={v => update('legal', 'zoning', v)} />
+                 </div>
+              </SectionForm>
+            )}
+
+            {activeTabId === 'bangunan' && !isTanahKosong && (
+               <SectionForm title="Spesifikasi Bangunan">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                    <InputBox label="Luas (m2)" type="number" value={b.luasBgn} onChange={v => update('bangunan', 'luasBgn', v)} />
+                    <InputBox label="Tahun" type="number" value={b.tahun} onChange={v => update('bangunan', 'tahun', v)} />
+                    <SelectBox label="Kondisi" value={b.kondisi} options={['Sangat Baik', 'Baik', 'Cukup', 'Buruk']} onChange={v => update('bangunan', 'kondisi', v)} />
+                    <SelectBox label="Status" value={b.statusHunian} options={['Dihuni sendiri', 'Kosong', 'Disewakan']} onChange={v => update('bangunan', 'statusHunian', v)} />
+                  </div>
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-6 mt-6">
+                    <InputBox label="Struktur" value={b.struktur} onChange={v => update('bangunan', 'struktur', v)} />
+                    <InputBox label="Atap" value={b.atap} onChange={v => update('bangunan', 'atap', v)} />
+                    <InputBox label="Lantai" value={b.lantai} onChange={v => update('bangunan', 'lantai', v)} />
+                  </div>
+               </SectionForm>
+            )}
+
+            {activeTabId === 'risiko' && (
+              <SectionForm title="HBU & Checklist Risiko">
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                   <SelectBox label="Kesimpulan HBU" value={c.hbu} options={['Rumah Tinggal', 'Ruko', 'Tanah Kosong']} onChange={v => update('catatan', 'hbu', v)} />
+                   <SelectBox label="Daya Jual Pasar" value={c.dayaJual} options={['Tinggi (< 3 Bulan)', 'Sedang', 'Rendah']} onChange={v => update('catatan', 'dayaJual', v)} />
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 bg-white border border-slate-200 p-6 rounded-3xl max-h-[400px] overflow-y-auto custom-scroll shadow-inner">
+                    {LAMPIRAN_2_LIST.map((item, idx) => {
+                      const isChecked = (form.lampiran2 || []).includes(item);
+                      return (
+                        <label key={idx} className={`flex items-start gap-3 p-4 rounded-xl cursor-pointer border transition-colors ${isChecked ? 'bg-red-50 border-red-200' : 'bg-transparent border-slate-100 hover:border-slate-300'}`}>
+                          <input type="checkbox" checked={isChecked} onChange={() => toggleLampiran2(item)} className="mt-0.5 w-4 h-4 rounded text-red-600 focus:ring-0 border-slate-300" />
+                          <span className={`text-sm font-semibold leading-tight ${isChecked ? 'text-red-900' : 'text-slate-600'}`}>{item}</span>
+                        </label>
+                      )
+                    })}
+                 </div>
+              </SectionForm>
+            )}
+
+            {activeTabId === 'pasar' && (
+              <SectionForm title="Data Pembanding (Market Data)">
+                {(form.pembanding || []).map((item, i) => (
+                  <div key={i} className="p-6 bg-white border border-slate-200 rounded-[2rem] mb-6 shadow-sm">
+                    <p className="text-[10px] font-black text-slate-400 mb-4 tracking-widest">PEMBANDING {i+1}</p>
+                    <InputBox label="Alamat" value={item.alamat} onChange={v => updateArrayData(i, 'alamat', v)} />
+                    <div className="grid grid-cols-2 gap-4 mt-4">
+                      <InputBox label="Harga Penawaran" type="number" value={item.harga} onChange={v => updateArrayData(i, 'harga', v)} />
+                      <InputBox label="Jarak (m)" value={item.jarak} onChange={v => updateArrayData(i, 'jarak', v)} />
+                    </div>
+                  </div>
+                ))}
+              </SectionForm>
+            )}
+
+            {activeTabId === 'nilai' && (
+               <SectionForm title="Kalkulasi Nilai Pasar">
+                  <div className="bg-slate-900 rounded-[3rem] p-8 md:p-12 text-white shadow-2xl shadow-green-950/20 mb-10">
+                     <div className="flex justify-between items-center mb-8">
+                        <h4 className="text-lg font-black flex items-center gap-3">Smart Calc <Calculator size={20} className="text-lime-400" /></h4>
+                        <button onClick={handleSmartCalc} className="bg-lime-400 text-green-950 px-6 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-white transition-all">Jalankan Kalkulasi</button>
+                     </div>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                        <div className="space-y-6">
+                           <div className="p-1 border-b border-white/10">
+                              <label className="text-[10px] font-black text-white/40 uppercase block mb-2">Indikasi Tanah / m2</label>
+                              <input type="number" value={n.tanah_m2 || ''} onChange={e => update('nilai', 'tanah_m2', e.target.value)} className="bg-transparent border-none focus:ring-0 text-2xl font-black w-full text-lime-400 p-0" placeholder="0" />
+                           </div>
+                           <div className="p-6 bg-white/5 rounded-3xl flex justify-between items-center">
+                              <span className="text-xs font-bold text-white/50 uppercase">Total Tanah:</span>
+                              <span className="text-xl font-black">Rp {Number(n.tanah_total || 0).toLocaleString('id-ID')}</span>
+                           </div>
+                        </div>
+                        <div className="space-y-6">
+                          <InputBox label="Nilai Bangunan Pasar" type="number" value={n.bgn_total} onChange={v => update('nilai', 'bgn_total', v)} />
+                          <InputBox label="Nilai Sarana Pelengkap" type="number" value={n.sarana_total} onChange={v => update('nilai', 'sarana_total', v)} />
+                        </div>
+                     </div>
+                     <div className="mt-10 p-8 bg-white/10 rounded-[2rem] border border-white/5 flex justify-between items-center">
+                        <p className="text-xs font-black text-white/50 uppercase tracking-widest leading-none">Opini Nilai Pasar Aset</p>
+                        <h2 className="text-2xl md:text-4xl font-black text-lime-400 leading-none tracking-tighter">Rp {Number(n.pasar_total || 0).toLocaleString('id-ID')}</h2>
+                     </div>
+                  </div>
+               </SectionForm>
+            )}
+
+            {activeTabId === 'simpan' && (
+              <div className="max-w-2xl mx-auto py-20 text-center animate-in zoom-in-95 duration-500">
+                 <div className="w-24 h-24 bg-green-50 rounded-[2rem] flex items-center justify-center mx-auto mb-8 text-green-700 shadow-xl shadow-green-600/10">
+                    <CheckCircle2 size={48} strokeWidth={3} />
+                 </div>
+                 <h2 className="text-3xl font-black text-slate-900 mb-4 tracking-tight">Simpan Ke Memori?</h2>
+                 <p className="text-slate-500 font-medium mb-12">Seluruh data yang divalidasi akan diamankan ke memori lokal secara permanen.</p>
+                 <button onClick={attemptSave} className="w-full bg-green-900 text-white py-6 rounded-[2rem] font-black text-lg shadow-2xl shadow-green-950/20 active:scale-95 transition-all hover:bg-green-800">SIMPAN DATA INSPEKSI</button>
+              </div>
+            )}
+
+          </div>
+        </div>
+
+        <footer className="px-6 py-5 lg:px-10 lg:py-6 border-t border-slate-200 bg-white flex justify-between items-center">
+           <button disabled={currentIndex === 0} onClick={handlePrev} className="px-6 py-3 font-black text-xs text-slate-400 uppercase tracking-widest disabled:opacity-0 hover:bg-slate-100 rounded-xl transition-all">Kembali</button>
+           <div className="flex gap-2">
+             {visibleTabs.map((t) => (<div key={t.id} className={`w-2 h-2 rounded-full transition-all duration-300 ${activeTabId === t.id ? 'bg-green-700 w-8' : 'bg-slate-200'}`} />))}
+           </div>
+           {currentIndex < visibleTabs.length - 1 ? (
+             <button onClick={handleNext} className="px-8 py-3 bg-slate-900 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg hover:scale-105 transition-all">Lanjut</button>
+           ) : <div className="w-24"></div>}
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// UI PRIMITIVES
+// ============================================================================
+function SidebarBtn({ icon, label, active, onClick }) {
+  return (
+    <button onClick={onClick} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-black uppercase tracking-widest transition-all ${active ? 'bg-lime-400 text-green-950 shadow-xl shadow-lime-500/10' : 'text-white/40 hover:bg-white/5 hover:text-white'}`}>
+      {icon} {label}
+    </button>
+  );
+}
+
+function MobileNavBtn({ icon, label, active, onClick }) {
+  return (
+    <button onClick={onClick} className={`flex flex-col items-center gap-1 transition-all ${active ? 'text-green-700 scale-110' : 'text-slate-400'}`}>
+      <div className={`p-2 rounded-xl ${active ? 'bg-green-50' : ''}`}>{icon}</div>
+      <span className="text-[10px] font-black uppercase tracking-widest">{label}</span>
+    </button>
+  );
+}
+
+function SectionForm({ title, children }) {
+  return (
+    <div className="space-y-10 animate-in fade-in slide-in-from-right-5 duration-500">
+      <h3 className="text-3xl font-black text-slate-900 tracking-tighter border-l-8 border-green-800 pl-6 leading-none py-2">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function InputBox({ label, type = 'text', value, onChange, placeholder = '', readOnly = false, isTextArea = false, req = false }) {
+  return (
+    <div className="space-y-2">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">{label} {req && <span className="text-red-500">*</span>}</label>
+      {isTextArea ? 
+        <textarea value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} readOnly={readOnly} className="w-full bg-white border-2 border-slate-100 rounded-3xl p-5 text-sm font-bold text-slate-900 focus:border-green-600 focus:ring-0 outline-none transition-all hover:border-slate-200 min-h-[120px]" />
+        : <input type={type} value={value || ''} onChange={e => onChange(e.target.value)} placeholder={placeholder} readOnly={readOnly} className="w-full bg-white border-2 border-slate-100 rounded-3xl p-5 text-sm font-bold text-slate-900 focus:border-green-600 focus:ring-0 outline-none transition-all hover:border-slate-200" />
+      }
+    </div>
+  );
+}
+
+function SelectBox({ label, value, options, onChange }) {
+  return (
+    <div className="space-y-2">
+      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">{label}</label>
+      <select value={value || ''} onChange={e => onChange(e.target.value)} className="w-full bg-white border-2 border-slate-100 rounded-3xl p-5 text-sm font-bold text-slate-900 focus:border-green-600 focus:ring-0 outline-none bg-no-repeat appearance-none transition-all hover:border-slate-200">
+        {options.map((o, i) => <option key={i} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+}
+
+function SplashScreen() {
+  return (
+    <div className="fixed inset-0 bg-green-950 flex flex-col items-center justify-center z-50 overflow-hidden">
+      <div className="absolute inset-0 opacity-10 pointer-events-none">
+        <div className="absolute top-0 left-0 w-96 h-96 bg-lime-400 rounded-full blur-[150px]"></div>
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-lime-400 rounded-full blur-[150px]"></div>
+      </div>
+      <div className="relative flex flex-col items-center animate-in zoom-in-50 duration-700">
+        <FrrLogo className="w-32 h-32 mb-10 shadow-2xl shadow-green-700/20" />
+        <h1 className="text-white text-4xl font-black tracking-tighter mb-4 text-center px-4">KJPP FUADAH, RUDI & REKAN</h1>
+        <div className="flex gap-2 mt-8">
+           <div className="w-2 h-2 rounded-full bg-lime-400 animate-bounce"></div>
+           <div className="w-2 h-2 rounded-full bg-lime-400 animate-bounce" style={{animationDelay: '0.1s'}}></div>
+           <div className="w-2 h-2 rounded-full bg-lime-400 animate-bounce" style={{animationDelay: '0.2s'}}></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfileModal({ onClose, current, onSave }) {
+  const [data, setData] = useState(current);
+  return (
+    <div className="fixed inset-0 bg-green-950/60 backdrop-blur-xl z-[70] flex justify-center items-center p-6">
+      <div className="bg-white w-full max-w-sm rounded-[3rem] shadow-2xl p-10 space-y-10 animate-in zoom-in-95">
+        <h2 className="text-2xl font-black text-slate-900 tracking-tight text-center">Profil Surveyor</h2>
+        <div className="space-y-6">
+          <InputBox label="Nama Surveyor" value={data.defaultSurveyor} onChange={v => setData({...data, defaultSurveyor: v})} />
+          <InputBox label="Nama Penilai Publik" value={data.defaultPenilai} onChange={v => setData({...data, defaultPenilai: v})} />
+        </div>
+        <div className="flex flex-col gap-4">
+          <button onClick={() => onSave(data)} className="w-full bg-green-900 text-white py-5 rounded-2xl font-black shadow-xl active:scale-95 transition-all hover:bg-green-800">SIMPAN PROFIL</button>
+          <button onClick={onClose} className="w-full text-slate-400 py-2 font-black text-[10px] uppercase tracking-widest hover:text-slate-600 transition-colors">Tutup</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+```
